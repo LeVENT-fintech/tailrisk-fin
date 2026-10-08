@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+.env
+mlruns/
+
+# 원자료와 가공 데이터는 Git 에 넣지 않는다. pipelines/collect_data.py 로 재생성.
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
