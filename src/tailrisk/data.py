@@ -264,7 +264,7 @@ def fetch_ofr() -> pd.DataFrame:
 
 
 def download_all(raw_dir: Path, start: str = START,
-                 sources: tuple[str, ...] = ("yahoo", "fred", "ecos", "ofr", "krx")) -> None:
+                 sources: tuple[str, ...] = ("yahoo", "fred", "ecos", "ofr", "krx", "cot", "events")) -> None:
     """원자료를 받아 raw_dir 에 CSV 로 저장한다. 하나가 실패해도 나머지는 계속."""
     raw_dir = Path(raw_dir)
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -298,6 +298,14 @@ def download_all(raw_dir: Path, start: str = START,
                       raw_dir / f"ecos_{key}.csv")
     if "ofr" in sources:
         _save("ofr_fsi", "OFR FSI", fetch_ofr, raw_dir / "ofr_fsi.csv")
+    if "cot" in sources:
+        from .events import fetch_cot
+        _save("cot", "CFTC TFF/Disagg", fetch_cot, raw_dir / "cot_weekly.csv")
+    if "events" in sources:
+        from .events import fetch_bok_dates, fetch_fomc_dates
+        for key, fn in [("fomc", fetch_fomc_dates), ("bok", fetch_bok_dates)]:
+            _save(f"events_{key}", "회의 일정", lambda: pd.Series(1, index=fn(2000).rename("date"), name="meeting"),
+                  raw_dir / f"events_{key}.csv")
     if "krx" in sources:
         if not os.environ.get("KRX_API_KEY"):
             print("[warn] KRX_API_KEY 가 없어 VKOSPI 수집을 건너뜁니다 (.env.example 참고)")
@@ -312,7 +320,8 @@ def load_raw(raw_dir: Path) -> dict[str, dict]:
     raw_dir = Path(raw_dir)
 
     def _read(p: Path, as_series: bool):
-        d = pd.read_csv(p, index_col="date", parse_dates=True)
+        d = pd.read_csv(p, index_col=0, parse_dates=True)
+        d.index.name = "date"
         return d.iloc[:, 0] if as_series else d
 
     def _group(prefix: str, keys, as_series: bool) -> dict:
@@ -329,6 +338,8 @@ def load_raw(raw_dir: Path) -> dict[str, dict]:
         "ecos": _group("ecos", ECOS, True),
         "ofr": _group("ofr", ["fsi"], False).get("fsi"),
         "krx": _group("krx", ["vkospi"], False),
+        "cot": _group("cot", ["weekly"], False).get("weekly"),
+        "events": {k: v.index for k, v in _group("events", ["fomc", "bok"], True).items()},
     }
 
 
@@ -445,7 +456,8 @@ def _monthly_to_daily(s: pd.Series, cal: pd.DatetimeIndex,
 def build_panel(assets: dict[str, pd.DataFrame], indicators: dict[str, pd.DataFrame],
                 fred: dict[str, pd.Series], proxies: dict[str, pd.DataFrame] | None = None,
                 ecos: dict[str, pd.Series] | None = None, ofr: pd.DataFrame | None = None,
-                krx: dict[str, pd.DataFrame] | None = None,
+                krx: dict[str, pd.DataFrame] | None = None, cot: pd.DataFrame | None = None,
+                events: dict[str, pd.DatetimeIndex] | None = None,
                 calendar_key: str = "spx", start: str | None = None) -> pd.DataFrame:
     """자산·지표 표를 하나의 일별 표로 합친다. 열 규칙은 모듈 docstring 참고.
 
@@ -509,6 +521,18 @@ def build_panel(assets: dict[str, pd.DataFrame], indicators: dict[str, pd.DataFr
     for key, df in (krx or {}).items():   # 한국 15:30 확정 -> 당일 값, 지연 없음
         out[key] = df["close"].sort_index().reindex(cal, method="ffill")
 
+    if cot is not None:                   # 화요일 기준, 금요일 공표 -> +3일 뒤부터 사용
+        from .events import cot_to_daily
+        c = cot_to_daily(cot, cal)
+        for col in c.columns:
+            out[col] = c[col]
+
+    for key, dates in (events or {}).items():   # 사전 공표 일정 -> 다음 회의까지 영업일 수, 20일 내 포함 여부
+        from .events import event_features
+        ev = event_features(cal, dates, key)
+        for col in ev.columns:
+            out[col] = ev[col]
+
     return out
 
 
@@ -516,7 +540,7 @@ def build_daily(raw_dir: Path, start: str | None = None) -> pd.DataFrame:
     g = load_raw(raw_dir)
     assets = assemble_assets(g)
     return build_panel(assets, g["indicators"], g["fred"], proxies=g["proxies"], ecos=g["ecos"],
-                       ofr=g["ofr"], krx=g["krx"], start=start)
+                       ofr=g["ofr"], krx=g["krx"], cot=g["cot"], events=g["events"], start=start)
 
 
 def coverage(panel: pd.DataFrame) -> pd.DataFrame:

@@ -18,7 +18,7 @@ cp .env.example .env                             # ECOS_API_KEY (한국 데이�
 .venv/Scripts/pytest -q
 ```
 원자료와 가공 데이터는 Git 에 넣지 않으므로 위 명령으로 재생성합니다. 야후·OFR 은 키가 필요 없고, FRED 는 키가 없으면 CSV 엔드포인트로 받습니다(네트워크에 따라 막힐 수 있음).
-일부 출처만 다시 받으려면 `--source yahoo|fred|ecos|ofr|krx`, 받아 둔 원자료로 패널만 다시 만들려면 `--skip-download`.
+일부 출처만 다시 받으려면 `--source yahoo|fred|ecos|ofr|krx|cot|events`, 받아 둔 원자료로 패널만 다시 만들려면 `--skip-download`.
 
 ## 구조
 ```
@@ -32,7 +32,7 @@ docs/             계획, 데이터 설명, 결과 문서
 ```
 
 ## 데이터 (`data/processed/daily.csv`)
-달력은 S&P 500 거래일. 2000-01-03 부터, 75열. 모든 열은 그 날짜의 미국 종가 시점에 알 수 있는 값입니다.
+달력은 S&P 500 거래일. 2000-01-03 부터, 86열. 모든 열은 그 날짜의 미국 종가 시점에 알 수 있는 값입니다.
 
 ### 자산 5종 (`{asset}_open/high/low/close/adj_close/volume/ret`)
 | 자산 | 가격 출처 | `adj_close` (배당 포함) | 비고 |
@@ -76,6 +76,12 @@ docs/             계획, 데이터 설명, 결과 문서
 
 ### 한국 내재변동성 (KRX Open API, 당일 값)
 `vkospi` 코스피200 변동성지수 종가. 2010-01 부터 (Open API 제공 시작). `.env` 의 `KRX_API_KEY` 와 '파생상품지수 일별시세' 서비스 승인이 필요하며, 날짜별 호출이라 첫 수집에 10분 이상 걸리고 이후는 마지막 날짜 다음부터만 받습니다.
+
+### 회의 일정 (사전 공표, 지연 없음)
+`fomc_next_bdays`, `fomc_in_20d`, `bok_next_bdays`, `bok_in_20d`: 다음 정례 FOMC·금통위까지 영업일 수와 앞으로 20영업일 안 포함 여부(0/1). 당일 회의는 세지 않습니다(결정이 종가 전에 발표). 임시회의(2001-09, 2008-10, 2020-03)는 제외하고, 취소된 2020-03-18 FOMC 는 당시 예정이었으므로 포함. 출처: 연준 과거·현재 일정 페이지, 한국은행 통화정책방향 결정회의 목록.
+
+### 투자자별 선물 포지션 (CFTC COT, 주별, **보고일 화요일 → 금요일부터 사용**)
+`cot_vix_lev`, `cot_es_lev`, `cot_es_am`, `cot_tn_am`, `cot_tn_lev`, `cot_gold_mm`: (롱−숏)/미결제약정. VIX·E-mini S&P 500·10년 국채 선물의 레버리지펀드(lev)·자산운용사(am), 금 선물의 매니지드머니(mm). 2006-06 부터.
 
 ### 금융스트레스 (OFR, **2영업일 지연**)
 `ofr_fsi`(종합), `ofr_credit`, `ofr_funding`, `ofr_volatility`, `ofr_em`. 2000 년부터 일별.

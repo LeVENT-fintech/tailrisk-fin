@@ -115,6 +115,26 @@ def test_no_lookahead(raw):
     pd.testing.assert_frame_equal(full.loc[:cut], part)
 
 
+# ---------------------------------------------------------------- 일정·COT
+
+def test_event_features_count_only_future_meetings():
+    from tailrisk.events import event_features
+    ev = event_features(US, pd.DatetimeIndex(["2020-01-10", "2020-01-29"]), "fomc", horizon=5)
+    assert ev.loc["2020-01-09", "fomc_next_bdays"] == 1 and ev.loc["2020-01-09", "fomc_in_5d"] == 1.0
+    assert ev.loc["2020-01-10", "fomc_next_bdays"] == 12            # 당일 회의는 세지 않음 (1/10 -> 1/29, 미국 휴장 1/20 제외)
+    assert ev.loc["2020-01-10", "fomc_in_5d"] == 0.0
+    assert np.isnan(ev.loc["2020-01-30", "fomc_next_bdays"])         # 이후 회의 없음
+
+
+def test_cot_is_available_from_friday():
+    from tailrisk.events import cot_to_daily
+    cot = pd.DataFrame({"cot_vix_lev": [0.1, 0.2]}, index=pd.to_datetime(["2020-01-07", "2020-01-14"]))  # 화요일
+    d = cot_to_daily(cot, US)
+    assert np.isnan(d.loc["2020-01-09", "cot_vix_lev"])
+    assert d.loc["2020-01-10", "cot_vix_lev"] == 0.1                  # 금요일부터
+    assert d.loc["2020-01-16", "cot_vix_lev"] == 0.1 and d.loc["2020-01-17", "cot_vix_lev"] == 0.2
+
+
 # ---------------------------------------------------------------- 자산 구성
 
 def test_fill_missing_days_uses_official_close():

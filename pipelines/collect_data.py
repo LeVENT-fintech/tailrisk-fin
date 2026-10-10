@@ -23,8 +23,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--start", default=D.START)
     ap.add_argument("--skip-download", action="store_true", help="data/raw 를 다시 받지 않는다")
-    ap.add_argument("--source", choices=["all", "yahoo", "fred", "ecos", "ofr", "krx"], default="all",
-                    help="일부 출처만 다시 받는다 (krx 는 날짜별 호출이라 처음엔 10분 이상)")
+    ap.add_argument("--source", choices=["all", "yahoo", "fred", "ecos", "ofr", "krx", "cot", "events"],
+                    default="all", help="일부 출처만 다시 받는다 (krx 는 날짜별 호출이라 처음엔 10분 이상)")
     ap.add_argument("--data-dir", default=str(ROOT / "data"))
     a = ap.parse_args()
 
@@ -32,7 +32,7 @@ def main() -> None:
     data_dir = Path(a.data_dir)
     raw_dir = data_dir / "raw"
     if not a.skip_download:
-        sources = ("yahoo", "fred", "ecos", "ofr", "krx") if a.source == "all" else (a.source,)
+        sources = ("yahoo", "fred", "ecos", "ofr", "krx", "cot", "events") if a.source == "all" else (a.source,)
         D.download_all(raw_dir, start=a.start, sources=sources)
 
     panel = D.build_daily(raw_dir, start=a.start)
