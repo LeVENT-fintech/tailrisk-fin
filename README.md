@@ -5,7 +5,7 @@
 > 질문: **LightGBM 이 HAR-RV·GARCH 보다 앞으로 20영업일 실현 변동성을 더 잘 맞히는가? 그 예측으로 목표 변동성 배분을 하면 고정 비중보다 최대낙폭이 줄어드는가?**
 >
 > 상태: 데이터 수집·피처·라벨 완료. 다음: walk-forward 평가 틀과 베이스라인(지난 21일 변동성, HAR-RV, GARCH) → LightGBM → 변동성 타겟 배분 → MLflow·Airflow.
-> 계획과 결정 기록: [docs/00_plan.md](docs/00_plan.md) · 데이터 카탈로그: [docs/01_data_catalog.md](docs/01_data_catalog.md)
+> 계획과 결정 기록: [docs/00_plan.md](docs/00_plan.md) · 데이터 카탈로그: [docs/01_data_catalog.md](docs/01_data_catalog.md) · 피처·라벨: [docs/02_features_labels.md](docs/02_features_labels.md)
 
 ## 시작하기
 ```bash
