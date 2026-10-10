@@ -100,6 +100,10 @@ ECOS = {
     "usdkrw_close": ("731Y003", "0000003", "asset"),         # 원/달러 종가 15:30
 }
 ECOS_MONTHLY_OFFSET_MONTHS = 2
+# KRX Open API (키: .env 의 KRX_API_KEY, API 별 서비스 승인 필요). 파생상품지수 일별시세에서 코스피200 변동성지수(VKOSPI)
+KRX_URL = "https://data-dbg.krx.co.kr/svc/apis/idx/drvprod_dd_trd?basDd={d}"
+KRX_VKOSPI_NAME = "코스피 200 변동성지수"
+KRX_START = "2010-01-01"   # Open API 제공 시작
 # OFR 금융스트레스지수 (일별, 2000~). 2영업일 전 데이터 기준 공표
 OFR_URL = "https://www.financialresearch.gov/financial-stress-index/data/fsi.csv"
 OFR_COLS = {"OFR FSI": "ofr_fsi", "Credit": "ofr_credit", "Funding": "ofr_funding",
@@ -217,6 +221,40 @@ def fetch_ecos(stat: str, item: str, start: str = START, end: str | None = None,
     return s[~s.index.duplicated()].sort_index()
 
 
+def fetch_krx_vkospi(start: str = KRX_START, end: str | None = None, key: str | None = None,
+                     existing: pd.DataFrame | None = None, pause: float = 0.05) -> pd.DataFrame:
+    """KRX 파생상품지수 일별시세를 날짜별로 호출해 VKOSPI OHLC 를 모은다 (날짜당 1회, 일 한도 10,000회).
+    existing 이 있으면 그 마지막 날짜 다음부터만 받아 이어 붙인다. 휴장일은 빈 응답이라 건너뛴다."""
+    import time
+
+    key = key or os.environ.get("KRX_API_KEY")
+    if not key:
+        raise RuntimeError("KRX_API_KEY 가 없습니다 (.env.example 참고)")
+    s = pd.Timestamp(start)
+    if existing is not None and len(existing):
+        s = max(s, existing.index.max() + pd.Timedelta(days=1))
+    e = pd.Timestamp(end) if end else pd.Timestamp(dt.date.today())
+    rows = []
+    for d in pd.bdate_range(s, e):
+        req = urllib.request.Request(KRX_URL.format(d=d.strftime("%Y%m%d")),
+                                     headers={"AUTH_KEY": key, "User-Agent": "Mozilla/5.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                j = json.load(r)
+        except Exception as e_:  # noqa: BLE001
+            raise RuntimeError(f"KRX {d.date()}: {type(e_).__name__} {getattr(e_, 'code', '')}".strip()) from None
+        for x in j.get("OutBlock_1", []):
+            if x.get("IDX_NM") == KRX_VKOSPI_NAME:
+                rows.append({"date": d, "open": x.get("OPNPRC_IDX"), "high": x.get("HGPRC_IDX"),
+                             "low": x.get("LWPRC_IDX"), "close": x.get("CLSPRC_IDX")})
+        time.sleep(pause)
+    new = pd.DataFrame(rows).set_index("date") if rows else pd.DataFrame(columns=OHLC)
+    new = new.apply(pd.to_numeric, errors="coerce")
+    out = pd.concat([existing, new]) if existing is not None else new
+    out.index.name = "date"
+    return out[~out.index.duplicated(keep="last")].sort_index()
+
+
 def fetch_ofr() -> pd.DataFrame:
     """OFR 금융스트레스지수 CSV. 열 이름은 OFR_COLS 로 바꾼다."""
     df = pd.read_csv(io.StringIO(_get(OFR_URL)))
@@ -226,7 +264,7 @@ def fetch_ofr() -> pd.DataFrame:
 
 
 def download_all(raw_dir: Path, start: str = START,
-                 sources: tuple[str, ...] = ("yahoo", "fred", "ecos", "ofr")) -> None:
+                 sources: tuple[str, ...] = ("yahoo", "fred", "ecos", "ofr", "krx")) -> None:
     """원자료를 받아 raw_dir 에 CSV 로 저장한다. 하나가 실패해도 나머지는 계속."""
     raw_dir = Path(raw_dir)
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -260,6 +298,13 @@ def download_all(raw_dir: Path, start: str = START,
                       raw_dir / f"ecos_{key}.csv")
     if "ofr" in sources:
         _save("ofr_fsi", "OFR FSI", fetch_ofr, raw_dir / "ofr_fsi.csv")
+    if "krx" in sources:
+        if not os.environ.get("KRX_API_KEY"):
+            print("[warn] KRX_API_KEY 가 없어 VKOSPI 수집을 건너뜁니다 (.env.example 참고)")
+        else:
+            p = raw_dir / "krx_vkospi.csv"
+            existing = pd.read_csv(p, index_col="date", parse_dates=True) if p.exists() else None
+            _save("vkospi", "KRX drvprod_dd_trd", lambda: fetch_krx_vkospi(existing=existing), p)
 
 
 def load_raw(raw_dir: Path) -> dict[str, dict]:
@@ -283,6 +328,7 @@ def load_raw(raw_dir: Path) -> dict[str, dict]:
         "fred": _group("fred", FRED, True),
         "ecos": _group("ecos", ECOS, True),
         "ofr": _group("ofr", ["fsi"], False).get("fsi"),
+        "krx": _group("krx", ["vkospi"], False),
     }
 
 
@@ -399,6 +445,7 @@ def _monthly_to_daily(s: pd.Series, cal: pd.DatetimeIndex,
 def build_panel(assets: dict[str, pd.DataFrame], indicators: dict[str, pd.DataFrame],
                 fred: dict[str, pd.Series], proxies: dict[str, pd.DataFrame] | None = None,
                 ecos: dict[str, pd.Series] | None = None, ofr: pd.DataFrame | None = None,
+                krx: dict[str, pd.DataFrame] | None = None,
                 calendar_key: str = "spx", start: str | None = None) -> pd.DataFrame:
     """자산·지표 표를 하나의 일별 표로 합친다. 열 규칙은 모듈 docstring 참고.
 
@@ -459,6 +506,9 @@ def build_panel(assets: dict[str, pd.DataFrame], indicators: dict[str, pd.DataFr
         for c in o.columns:
             out[c] = o[c]
 
+    for key, df in (krx or {}).items():   # 한국 15:30 확정 -> 당일 값, 지연 없음
+        out[key] = df["close"].sort_index().reindex(cal, method="ffill")
+
     return out
 
 
@@ -466,7 +516,7 @@ def build_daily(raw_dir: Path, start: str | None = None) -> pd.DataFrame:
     g = load_raw(raw_dir)
     assets = assemble_assets(g)
     return build_panel(assets, g["indicators"], g["fred"], proxies=g["proxies"], ecos=g["ecos"],
-                       ofr=g["ofr"], start=start)
+                       ofr=g["ofr"], krx=g["krx"], start=start)
 
 
 def coverage(panel: pd.DataFrame) -> pd.DataFrame:

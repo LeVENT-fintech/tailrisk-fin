@@ -4,7 +4,7 @@
 
 > 질문: **LightGBM 이 HAR-RV·GARCH 보다 앞으로 20영업일 실현 변동성을 더 잘 맞히는가? 그 예측으로 목표 변동성 배분을 하면 고정 비중보다 최대낙폭이 줄어드는가?**
 >
-> 상태: 데이터 수집 완료 (VKOSPI 만 KRX Open API 키 발급 후 추가 예정). 다음: 피처·라벨 → 베이스라인(HAR-RV, GARCH) → LightGBM → 변동성 타겟 배분 → MLflow·Airflow.
+> 상태: 데이터 수집 완료. 다음: 피처·라벨 → 베이스라인(HAR-RV, GARCH) → LightGBM → 변동성 타겟 배분 → MLflow·Airflow.
 > 계획과 결정 기록: [docs/00_plan.md](docs/00_plan.md)
 
 ## 시작하기
@@ -13,12 +13,12 @@ python -m venv .venv
 .venv/Scripts/pip install -e ".[dev]"            # macOS/Linux: .venv/bin/pip
 .venv/Scripts/pip install -e ".[ml,viz]"         # 모델링 단계에서 추가
 
-cp .env.example .env                             # ECOS_API_KEY (한국 데이터), FRED_API_KEY (선택) 입력
-.venv/Scripts/python pipelines/collect_data.py   # 야후·FRED·ECOS·OFR -> data/raw, data/processed/daily.csv (약 2분)
+cp .env.example .env                             # ECOS_API_KEY (한국 데이터), FRED_API_KEY, KRX_API_KEY 입력
+.venv/Scripts/python pipelines/collect_data.py   # 야후·FRED·ECOS·OFR·KRX -> data/raw, data/processed/daily.csv (첫 실행 15분)
 .venv/Scripts/pytest -q
 ```
 원자료와 가공 데이터는 Git 에 넣지 않으므로 위 명령으로 재생성합니다. 야후·OFR 은 키가 필요 없고, FRED 는 키가 없으면 CSV 엔드포인트로 받습니다(네트워크에 따라 막힐 수 있음).
-일부 출처만 다시 받으려면 `--source yahoo|fred|ecos|ofr`, 받아 둔 원자료로 패널만 다시 만들려면 `--skip-download`.
+일부 출처만 다시 받으려면 `--source yahoo|fred|ecos|ofr|krx`, 받아 둔 원자료로 패널만 다시 만들려면 `--skip-download`.
 
 ## 구조
 ```
@@ -74,9 +74,12 @@ docs/             계획, 데이터 설명, 결과 문서
 | `kr_mcap` | 시가총액 (억원). `kr_value / kr_mcap` 이 회전율 | 2003 | 수준 |
 | `kospi_divyield` | KOSPI 배당수익률 (%, 월별) | 2004 | 월별 값을 2개월 뒤부터 사용 |
 
+### 한국 내재변동성 (KRX Open API, 당일 값)
+`vkospi` 코스피200 변동성지수 종가. 2010-01 부터 (Open API 제공 시작). `.env` 의 `KRX_API_KEY` 와 '파생상품지수 일별시세' 서비스 승인이 필요하며, 날짜별 호출이라 첫 수집에 10분 이상 걸리고 이후는 마지막 날짜 다음부터만 받습니다.
+
 ### 금융스트레스 (OFR, **2영업일 지연**)
 `ofr_fsi`(종합), `ofr_credit`, `ofr_funding`, `ofr_volatility`, `ofr_em`. 2000 년부터 일별.
 
 **수집 상태 (2026-10-11)**
 - FRED 는 `.env` 의 `FRED_API_KEY` 로 API 서버에서 받습니다 (CSV 엔드포인트는 이 네트워크에서 불통).
-- VKOSPI(코스피200 변동성지수)는 KRX Open API 키 발급 후 추가 예정. 그전까지 KOSPI 내재변동성은 없음.
+- VKOSPI 는 KRX Open API 로 수집 (2010~). `--source krx` 로 증분 갱신.
