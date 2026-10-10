@@ -47,9 +47,11 @@ ETF_PROXIES = {
     "lqd": "LQD",        # 투자등급 회사채 ETF (2002-07~)
     "ief": "IEF",        # 미국 7-10년 국채 ETF (2002-07~)
 }
-# FRED 일별 시계열 (API 키 불필요)
+# FRED 일별 시계열. 키(.env 의 FRED_API_KEY)가 있으면 API 서버, 없으면 CSV 엔드포인트
 FRED = {
-    "hy_oas": "BAMLH0A0HYM2",  # 미국 하이일드 신용스프레드 (%p)
+    "hy_oas": "BAMLH0A0HYM2",  # 미국 하이일드 신용스프레드 (%p). 2026-04 부터 FRED 가 최근 3년만 제공
+    "baa10y": "BAA10Y",        # 무디스 Baa 회사채 - 10년 국채 (%p). 1986~, 긴 역사의 신용스프레드
+    "aaa10y": "AAA10Y",        # 무디스 Aaa 회사채 - 10년 국채 (%p). baa10y - aaa10y 가 신용등급 간 스프레드
     "t10y2y": "T10Y2Y",        # 10년-2년 금리차 (%p)
     "dgs10": "DGS10",          # 10년 국채금리 (%)
     "dgs3mo": "DGS3MO",        # 3개월 국채금리 (%)
@@ -99,8 +101,36 @@ def fetch_yahoo(ticker: str, start: str = START) -> pd.DataFrame:
     return df[OHLC + ["adj_close", "volume"]].dropna(subset=["close"])
 
 
-def fetch_fred(series: str, start: str = START, tries: int = 2, timeout: int = 60) -> pd.Series:
-    """FRED CSV 엔드포인트. 결측('.')은 NaN. 실패하면 타임아웃을 늘려 재시도."""
+FRED_API_URL = "https://api.stlouisfed.org/fred/series/observations"
+
+
+def _fetch_fred_api(series: str, start: str, key: str, timeout: int) -> pd.Series:
+    """FRED API 서버 경로. 오류 메시지에 URL(키 포함)을 남기지 않는다."""
+    import urllib.parse
+
+    q = urllib.parse.urlencode({"series_id": series, "api_key": key, "file_type": "json",
+                                "observation_start": start})
+    try:
+        with urllib.request.urlopen(f"{FRED_API_URL}?{q}", timeout=timeout) as r:
+            j = json.load(r)
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(f"FRED API {series}: {type(e).__name__} {getattr(e, 'code', '')}".strip()) from None
+    obs = j.get("observations")
+    if obs is None:
+        raise RuntimeError(f"FRED API {series}: {j.get('error_message', 'unexpected response')}")
+    s = pd.Series(pd.to_numeric([o["value"] for o in obs], errors="coerce"),   # '.' -> NaN
+                  index=pd.to_datetime([o["date"] for o in obs]), name=series)
+    s.index.name = "date"
+    return s
+
+
+def fetch_fred(series: str, start: str = START, tries: int = 2, timeout: int = 60,
+               key: str | None = None) -> pd.Series:
+    """FRED. 키(FRED_API_KEY)가 있으면 API 서버, 없으면 CSV 엔드포인트. 결측('.')은 NaN.
+    CSV 경로는 실패하면 타임아웃을 늘려 재시도."""
+    key = key or os.environ.get("FRED_API_KEY")
+    if key:
+        return _fetch_fred_api(series, start, key, timeout)
     url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}&cosd={start}"
     last: Exception | None = None
     for i in range(tries):
