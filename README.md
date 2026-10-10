@@ -4,7 +4,7 @@
 
 > 질문: **LightGBM 이 HAR-RV·GARCH 보다 앞으로 20영업일 실현 변동성을 더 잘 맞히는가? 그 예측으로 목표 변동성 배분을 하면 고정 비중보다 최대낙폭이 줄어드는가?**
 >
-> 상태: 데이터 수집 완료. 다음: 피처·라벨 → 베이스라인(HAR-RV, GARCH) → LightGBM → 변동성 타겟 배분 → MLflow·Airflow.
+> 상태: 데이터 수집·피처·라벨 완료. 다음: walk-forward 평가 틀과 베이스라인(지난 21일 변동성, HAR-RV, GARCH) → LightGBM → 변동성 타겟 배분 → MLflow·Airflow.
 > 계획과 결정 기록: [docs/00_plan.md](docs/00_plan.md) · 데이터 카탈로그: [docs/01_data_catalog.md](docs/01_data_catalog.md)
 
 ## 시작하기
@@ -15,6 +15,7 @@ python -m venv .venv
 
 cp .env.example .env                             # ECOS_API_KEY (한국 데이터), FRED_API_KEY, KRX_API_KEY 입력
 .venv/Scripts/python pipelines/collect_data.py   # 야후·FRED·ECOS·OFR·KRX -> data/raw, data/processed/daily.csv (첫 실행 15분)
+.venv/Scripts/python pipelines/build_features.py # daily.csv -> data/processed/features.csv (라벨 + 1차·2차 피처, 약 10초)
 .venv/Scripts/pytest -q
 ```
 원자료와 가공 데이터는 Git 에 넣지 않으므로 위 명령으로 재생성합니다. 야후·OFR 은 키가 필요 없고, FRED 는 키가 없으면 CSV 엔드포인트로 받습니다(네트워크에 따라 막힐 수 있음).
@@ -22,8 +23,8 @@ cp .env.example .env                             # ECOS_API_KEY (한국 데이�
 
 ## 구조
 ```
-src/tailrisk/     라이브러리 (data.py: 수집·자산 구성·패널 구성)
-pipelines/        실행 스크립트 (collect_data.py)
+src/tailrisk/     라이브러리 (data.py: 수집·자산 구성·패널, events.py: 회의 일정·COT, features.py: 라벨·피처)
+pipelines/        실행 스크립트 (collect_data.py, build_features.py)
 tests/            패널 규칙 검증
 data/raw/         원자료 CSV (Git 제외)
 data/processed/   daily.csv (Git 제외)
@@ -85,6 +86,13 @@ docs/             계획, 데이터 설명, 결과 문서
 
 ### 금융스트레스 (OFR, **2영업일 지연**)
 `ofr_fsi`(종합), `ofr_credit`, `ofr_funding`, `ofr_volatility`, `ofr_em`. 2000 년부터 일별.
+
+## 피처·라벨 (`data/processed/features.csv`)
+행 = (date, asset). `src/tailrisk/features.py`.
+- **라벨 `y`:** log(앞으로 20영업일 실현변동성, 연율). t+1~t+20 수익률로 계산하고 관측이 16개 미만이면 NaN. 마지막 20행은 NaN.
+- **1차 피처 36개 (2000년부터):** 자산별 실현변동성 5·21·63일(로그)과 기울기, Parkinson 변동성, 수익률 5·21·63일, 1년 z-점수, 거래량 21/63일 비율, 당일 고저폭; 공통으로 VIX 수준·21일 변화·실현변동성 대비, 달러지수·달러엔·WTI 변화와 변동성, 미국 10년·커브, 무디스 스프레드와 변화, CP 스프레드, OFR 3종, 한국 3년·한미 금리차, FOMC·금통위 일정.
+- **2차 피처 22개 (늦게 시작):** VIX 기간구조, VVIX/VIX, MOVE, GVZ, OVX, VKOSPI(수준·실현 대비), 신용 ETF 비율과 변화, TIPS·기대인플레이션 변화, 외국인 순매수/거래대금 21일, 회전율 5/63일, EWY 변동성·KOSPI 괴리, COT 6종, VIX9D/VIX.
+- 미래 패널을 잘라내도 과거 피처와 완전한 창의 라벨이 변하지 않는 것을 테스트로 고정 (`tests/test_features.py`).
 
 **수집 상태 (2026-10-11)**
 - FRED 는 `.env` 의 `FRED_API_KEY` 로 API 서버에서 받습니다 (CSV 엔드포인트는 이 네트워크에서 불통).

@@ -152,7 +152,8 @@ def event_features(cal: pd.DatetimeIndex, dates: pd.DatetimeIndex, prefix: str, 
     """'다음 회의까지 영업일 수' 와 '앞으로 horizon 영업일 안에 회의가 있는가(0/1)'. t 보다 뒤의 회의만 센다."""
     dates = pd.DatetimeIndex(sorted(set(dates)))
     pos_next = dates.searchsorted(cal, side="right")          # cal[i] 보다 뒤인 첫 회의
-    nxt = np.where(pos_next < len(dates), dates[np.minimum(pos_next, len(dates) - 1)].values, np.datetime64("NaT"))
+    nxt = np.where(pos_next < len(dates), dates[np.minimum(pos_next, len(dates) - 1)].values,
+                   np.datetime64("NaT", "ns"))
     nxt = pd.DatetimeIndex(nxt)
     # 영업일 수: 달력 기준 위치 차이 (회의일이 미국 휴장일이면 다음 달력일 기준)
     cal_pos = cal.searchsorted(nxt.fillna(cal[-1] + pd.Timedelta(days=1)))
