@@ -1,4 +1,4 @@
-"""야후·FRED·ECOS 원자료를 data/raw 에 받고 data/processed/daily.csv 를 만든다.
+"""야후·FRED·ECOS·OFR 원자료를 data/raw 에 받고 data/processed/daily.csv 를 만든다.
 
 사용
   python pipelines/collect_data.py                  # 전체 수집 + 패널 구성
@@ -23,7 +23,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--start", default=D.START)
     ap.add_argument("--skip-download", action="store_true", help="data/raw 를 다시 받지 않는다")
-    ap.add_argument("--source", choices=["all", "yahoo", "fred", "ecos"], default="all",
+    ap.add_argument("--source", choices=["all", "yahoo", "fred", "ecos", "ofr"], default="all",
                     help="일부 출처만 다시 받는다")
     ap.add_argument("--data-dir", default=str(ROOT / "data"))
     a = ap.parse_args()
@@ -32,7 +32,7 @@ def main() -> None:
     data_dir = Path(a.data_dir)
     raw_dir = data_dir / "raw"
     if not a.skip_download:
-        sources = ("yahoo", "fred", "ecos") if a.source == "all" else (a.source,)
+        sources = ("yahoo", "fred", "ecos", "ofr") if a.source == "all" else (a.source,)
         D.download_all(raw_dir, start=a.start, sources=sources)
 
     panel = D.build_daily(raw_dir, start=a.start)

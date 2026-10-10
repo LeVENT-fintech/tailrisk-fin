@@ -4,7 +4,7 @@
 
 > 질문: **LightGBM 이 HAR-RV·GARCH 보다 앞으로 20영업일 실현 변동성을 더 잘 맞히는가? 그 예측으로 목표 변동성 배분을 하면 고정 비중보다 최대낙폭이 줄어드는가?**
 >
-> 상태: 데이터 수집 완료 (FRED 하이일드 스프레드만 서버 불통으로 보류). 다음: 피처·라벨 → 베이스라인(HAR-RV, GARCH) → LightGBM → 변동성 타겟 배분 → MLflow·Airflow.
+> 상태: 데이터 수집 완료 (VKOSPI 만 KRX Open API 키 발급 후 추가 예정). 다음: 피처·라벨 → 베이스라인(HAR-RV, GARCH) → LightGBM → 변동성 타겟 배분 → MLflow·Airflow.
 > 계획과 결정 기록: [docs/00_plan.md](docs/00_plan.md)
 
 ## 시작하기
@@ -14,15 +14,15 @@ python -m venv .venv
 .venv/Scripts/pip install -e ".[ml,viz]"         # 모델링 단계에서 추가
 
 cp .env.example .env                             # ECOS_API_KEY (한국 데이터), FRED_API_KEY (선택) 입력
-.venv/Scripts/python pipelines/collect_data.py   # 야후·FRED·ECOS -> data/raw, data/processed/daily.csv (약 1분)
+.venv/Scripts/python pipelines/collect_data.py   # 야후·FRED·ECOS·OFR -> data/raw, data/processed/daily.csv (약 2분)
 .venv/Scripts/pytest -q
 ```
-원자료와 가공 데이터는 Git 에 넣지 않으므로 위 명령으로 재생성합니다. 야후는 키가 필요 없고, FRED 는 키가 없으면 CSV 엔드포인트로 받습니다(네트워크에 따라 막힐 수 있음).
-일부 출처만 다시 받으려면 `--source yahoo|fred|ecos`, 받아 둔 원자료로 패널만 다시 만들려면 `--skip-download`.
+원자료와 가공 데이터는 Git 에 넣지 않으므로 위 명령으로 재생성합니다. 야후·OFR 은 키가 필요 없고, FRED 는 키가 없으면 CSV 엔드포인트로 받습니다(네트워크에 따라 막힐 수 있음).
+일부 출처만 다시 받으려면 `--source yahoo|fred|ecos|ofr`, 받아 둔 원자료로 패널만 다시 만들려면 `--skip-download`.
 
 ## 구조
 ```
-src/tailrisk/     라이브러리 (data.py: 수집·패널 구성)
+src/tailrisk/     라이브러리 (data.py: 수집·자산 구성·패널 구성)
 pipelines/        실행 스크립트 (collect_data.py)
 tests/            패널 규칙 검증
 data/raw/         원자료 CSV (Git 제외)
@@ -32,24 +32,51 @@ docs/             계획, 데이터 설명, 결과 문서
 ```
 
 ## 데이터 (`data/processed/daily.csv`)
-달력은 S&P 500 거래일. 2000-01-03 부터, 약 50열.
+달력은 S&P 500 거래일. 2000-01-03 부터, 75열. 모든 열은 그 날짜의 미국 종가 시점에 알 수 있는 값입니다.
 
-| 열 | 내용 | 출처 | 시작 | 시점 규칙 |
-|---|---|---|---|---|
-| `spx_*`, `kospi_*`, `tlt_*`, `gld_*`, `usdkrw_*` | 자산 5종 OHLC, 배당 반영 종가 `_adj_close`, 로그수익률 `_ret` | Yahoo | SPX·KOSPI 2000, TLT 2002-07, USDKRW 2003-12, GLD 2004-11 | 당일 종가. 휴장일은 수준만 앞값 채움, 수익률은 NaN |
-| `vix`, `vix9d`, `vix3m` | S&P 500 내재변동성 30일·9일·3개월 (기간구조) | Yahoo | 2000, 2011, 2006-07 | 당일 종가 |
-| `move`, `dxy` | 미국 국채 내재변동성, 달러지수 | Yahoo | 2002-11, 2000 | 당일 종가 |
-| `us10y`, `us3m` | 미국 10년·3개월 국채금리 (%) | Yahoo (`^TNX`, `^IRX`) | 2000 | 당일 종가 |
-| `hyg`, `lqd`, `ief` | 하이일드·투자등급 회사채, 7-10년 국채 ETF (배당 반영 종가). `hyg/ief` 비율이 신용스프레드 대용 | Yahoo | 2007-04, 2002-07, 2002-07 | 당일 종가 |
-| `baa10y`, `aaa10y` | 무디스 Baa·Aaa 회사채와 10년 국채의 스프레드 (%p). 2000년부터 있는 신용스프레드 | FRED | 2000 | **1영업일 지연**. 채권시장만 쉬는 날은 앞값 채움 |
-| `hy_oas` | ICE BofA 하이일드 스프레드 (%p). FRED 가 2026-04 부터 최근 3년만 제공 | FRED | 2023-10 | 1영업일 지연 |
-| `t10y2y`, `dgs10`, `dgs3mo` | 10y-2y, 10y, 3m 금리 | FRED | 2000 | 1영업일 지연 |
-| `kr_ktb3y`, `kr_ktb10y`, `kr_cd91`, `kr_base_rate` | 국고채 3년·10년, CD 91일, 기준금리 (%) | ECOS | 2000 (10년은 2000-12) | 당일 값 (한국이 먼저 마감) |
-| `kr_foreign_netbuy` | 외국인 순매수, 유가증권시장 (억원) | ECOS | 2003-01 | 흐름. 미국 휴장일 분은 다음 거래일에 합산, 한국 휴장일은 NaN |
-| `usdkrw_1530` | 원/달러 15:30 종가 (서울외국환중개) | ECOS | 2000 | 당일 값. 야후 `KRW=X` 의 교차 검증용 |
+### 자산 5종 (`{asset}_open/high/low/close/adj_close/volume/ret`)
+| 자산 | 가격 출처 | `adj_close` (배당 포함) | 비고 |
+|---|---|---|---|
+| `spx` S&P 500 | 야후 `^GSPC` | 총수익지수 `^SP500TR` 수준 | 거래량은 SPY |
+| `kospi` KOSPI | 야후 `^KS11` | ECOS 월별 배당수익률을 일별 적립 (2004~, 그 전은 가격지수) | 야후에 빠진 거래일 6일을 ECOS 종가로 보완 |
+| `tlt` 미국 장기채 ETF | 야후 `TLT` (2002-07~) | 야후 분배금 반영 종가 | |
+| `gld` 금 ETF | 야후 `GLD` (2004-11~) | 야후 | 2000-08~2004-11 은 금 선물 `GC=F` 종가로 접합 (고저가 없음) |
+| `usdkrw` 달러/원 | **ECOS 서울외국환중개 시가·고가·저가·15:30 종가** (2000~) | 종가와 같음 | 야후 `KRW=X` 는 고저가 불량이라 `usdkrw_yahoo` 열로만 둠 |
 
-금리는 야후(당일)와 FRED(1일 지연) 두 벌이 있습니다. 피처에는 당일 값인 `us10y`·`us3m` 을 쓰고 FRED 는 교차 검증용입니다 (상관 0.999).
+`_ret` 는 `adj_close` 의 로그 수익률입니다. 휴장일은 수준만 앞값 채움, 수익률·거래량은 NaN. 미국 휴장일에 거래된 움직임은 다음 미국 거래일 수익률에 합쳐집니다.
 
-**수집 상태 (2026-10-10)**
-- FRED: `fred.stlouisfed.org` 는 이 네트워크에서 응답하지 않지만, API 서버(`api.stlouisfed.org`)는 되므로 `.env` 의 `FRED_API_KEY` 로 받습니다. 수집 완료. 하이일드 스프레드 `hy_oas` 는 FRED 정책상 최근 3년(2023-10~)만 있어, 2000년부터의 신용 신호는 `baa10y` 와 `hyg/ief` 비율(2007~)로 봅니다.
-- ECOS: 수집 완료. 외국인 순매수는 ECOS 일별 계열이 2003-01 부터라 그 이전은 비어 있고, 국고채 10년은 2000-12 부터입니다. 항목 코드는 ECOS 항목 목록으로 확인했습니다 (`010200000`=국고채 3년, `010210000`=국고채 10년).
+### 시장 지표 (당일 종가, 야후)
+| 열 | 내용 | 시작 |
+|---|---|---|
+| `vix`, `vix9d`, `vix3m`, `vvix` | S&P 500 내재변동성 30일·9일·3개월, VIX 의 변동성 | 2000, 2011, 2006, 2007 |
+| `move`, `gvz`, `ovx` | 미국 국채·금·원유 내재변동성 | 2002, 2008, 2007 |
+| `dxy`, `usdjpy`, `wti` | 달러지수, 달러/엔, WTI 원유 선물 | 2000, 2000, 2000-08 |
+| `us10y`, `us3m` | 미국 10년·3개월 국채금리 (%) | 2000 |
+| `hyg`, `lqd`, `ief`, `ewy`, `spy` | 하이일드·투자등급 회사채, 7-10년 국채, 한국 주식, S&P 500 ETF (배당 반영 종가) | 2007, 2002, 2002, 2000, 2000 |
+| `usdkrw_yahoo` | 야후 달러/원 종가 (교차 검증용) | 2003-12 |
+
+### 미국 거시·신용 (FRED, **1영업일 지연**, 채권 휴장일 앞값 채움)
+| 열 | 내용 | 시작 |
+|---|---|---|
+| `baa10y`, `aaa10y` | 무디스 Baa·Aaa 회사채 − 10년 국채 (%p) | 2000 |
+| `hy_oas` | ICE BofA 하이일드 스프레드 (%p). FRED 가 2026-04 부터 최근 3년만 제공 | 2023-10 |
+| `t10y2y`, `dgs10`, `dgs3mo` | 10y-2y, 10년, 3개월 금리 | 2000 |
+| `cp3m` | AA 금융 CP 3개월 금리. `cp3m - dgs3mo` 가 자금조달 스프레드 | 2000 |
+| `tips10` | 10년 물가연동채 실질금리. `dgs10 - tips10` 이 기대인플레이션 | 2003 |
+| `fedfunds` | 실효 연방기금금리. 현금 레그·조달비용 기준 | 2000 |
+
+### 한국 (ECOS, 당일 값. 한국이 먼저 마감)
+| 열 | 내용 | 시작 | 규칙 |
+|---|---|---|---|
+| `kr_ktb3y`, `kr_ktb10y`, `kr_cd91`, `kr_base_rate` | 국고채 3년·10년, CD 91일, 기준금리 (%) | 2000 (10년은 2000-12) | 수준 |
+| `kr_call` | 콜금리 1일물 (%). 원화 현금 레그 기준 | 2000 | 익일 공표라 **1영업일 지연** |
+| `kr_foreign_netbuy`, `kr_value` | 외국인 순매수, 거래대금 (억원, 유가증권시장) | 2003, 2000 | 흐름. 미국 휴장일 분 합산, 한국 휴장일 NaN |
+| `kr_mcap` | 시가총액 (억원). `kr_value / kr_mcap` 이 회전율 | 2003 | 수준 |
+| `kospi_divyield` | KOSPI 배당수익률 (%, 월별) | 2004 | 월별 값을 2개월 뒤부터 사용 |
+
+### 금융스트레스 (OFR, **2영업일 지연**)
+`ofr_fsi`(종합), `ofr_credit`, `ofr_funding`, `ofr_volatility`, `ofr_em`. 2000 년부터 일별.
+
+**수집 상태 (2026-10-11)**
+- FRED 는 `.env` 의 `FRED_API_KEY` 로 API 서버에서 받습니다 (CSV 엔드포인트는 이 네트워크에서 불통).
+- VKOSPI(코스피200 변동성지수)는 KRX Open API 키 발급 후 추가 예정. 그전까지 KOSPI 내재변동성은 없음.
